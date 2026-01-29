@@ -1,4 +1,5 @@
-# Minecraft Server Terraform Infrastructure
+<details>
+<summary># Minecraft Server Terraform Infrastructure</summary>
 
 Infrastructure as Code (IaC) for managing Minecraft server on AWS using Terraform.
 
@@ -344,3 +345,129 @@ This project is for personal/educational use.
 ---
 
 **Note**: This infrastructure was created by importing existing AWS resources. Server configuration inside EC2 (Minecraft installation, screen sessions, etc.) is managed separately and not included in this Terraform code.
+</details>
+
+<details>
+  <summary> prometheus</summary>
+  1. Node Exporter (the data collector)
+
+Tiny program (~10MB) that runs on EC2
+Exposes system metrics at http://localhost:9100/metrics
+Examples:
+
+node_memory_MemAvailable_bytes
+node_cpu_seconds_total
+node_filesystem_avail_bytes
+
+
+
+2. Prometheus (the database + collector)
+
+Scrapes Node Exporter every 15 seconds
+Stores metrics in time-series database
+Provides web UI for querying/graphing
+Evaluates alert rules
+
+3. Alert Rules
+
+Created alert_rules.yml
+Triggers alert when memory > 80% for 2 minutes
+Currently shows as PENDING in Prometheus UI
+
+
+Step-by-Step What We Did:
+1. Connected to EC2
+bashaws ssm start-session --target i-0aac7ea2cc5bf7254
+(Had to use AWS Console Session Manager instead because plugin wasn't installed)
+2. Checked Current State
+bashfree -h  # Memory: 1.8GB/1.9GB used
+top      # Minecraft using 78% memory
+3. Installed Node Exporter
+bashcd /tmp
+wget https://github.com/.../node_exporter-1.7.0.tar.gz
+tar xvfz node_exporter-*.tar.gz
+./node_exporter &  # Started in background
+4. Installed Prometheus
+bashwget https://github.com/.../prometheus-2.48.0.tar.gz
+tar xvfz prometheus-*.tar.gz
+cd prometheus-*
+5. Configured Prometheus
+Edited prometheus.yml to scrape two targets:
+yamlscrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]  # Prometheus itself
+  
+  - job_name: "node"
+    static_configs:
+      - targets: ["localhost:9100"]  # Node Exporter
+(This part was painful with nano editor issues 😅)
+6. Created Alert Rules
+alert_rules.yml:
+yamlgroups:
+  - name: minecraft_alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: (memory usage) > 80
+        for: 2m
+        annotations:
+          summary: "High memory usage!"
+7. Started Prometheus
+bash./prometheus --config.file=prometheus.yml &
+```
+
+### 8. Opened Port in Security Group
+- Added inbound rule for port 9090
+- Source: My IP only (secure)
+
+### 9. Accessed Web UI
+- Opened `http://52.27.139.231:9090` in browser
+- Checked Status → Targets (both UP!)
+- Ran queries like:
+```
+  node_memory_MemAvailable_bytes / 1024 / 1024 / 1024
+```
+- Viewed Alerts (HighMemoryUsage is PENDING)
+
+---
+
+## Key Concepts You Learned:
+
+**1. Monitoring Architecture**
+- Exporter (collects) vs. Monitor (stores/queries)
+- Pull-based model (Prometheus pulls from exporters)
+
+**2. Time-Series Data**
+- Metrics stored with timestamps
+- Can query historical data
+- Useful for seeing trends
+
+**3. PromQL (Prometheus Query Language)**
+```
+# Memory usage percentage
+(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+
+# CPU usage rate
+100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+4. Alerting
+
+Define conditions (expr)
+Set duration (for: 2m)
+Triggers when condition met
+
+5. Resource Impact
+
+Node Exporter: ~10MB RAM, <1% CPU
+Prometheus: ~200MB RAM, 1-2% CPU
+Minimal impact on Minecraft server
+
+
+Current Status:
+✅ Node Exporter running (collecting metrics)
+✅ Prometheus running (storing & querying)
+✅ Alert rule configured (memory > 80%)
+✅ Web UI accessible from your browser
+❌ Not configured for auto-start on reboot (will stop if EC2 restarts)
+❌ No notification system (alerts only show in web UI)
+  
+</details>
